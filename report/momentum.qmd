@@ -7,6 +7,15 @@ title: "动量"
 base, plus = load("cap300", "momentum"), load("cap300", "momentum_plus")
 plusB = load("sz50", "momentum_plus")
 ex = load("cap300", "execution")
+sb, sp, spB = base["stats"], plus["stats"], plusB["stats"]
+nP, nRaw, nB = sp.index[0], sp.index[1], sp.index[2]
+expo = plus["exposure"]
+ey = expo.groupby(expo.index.year).mean()
+eq = base["equity"]["动量 Top10"].resample("YE").last()
+yr = (eq / eq.shift(1) - 1)
+yr.index = yr.index.year
+tv = ex["turnover_value"]
+gap = lambda c: tv.loc[("动量+", c), "年化收益"] - tv.loc[("基础版 动量Top10", c), "年化收益"]
 ```
 
 ## 1. 经济直觉
@@ -50,10 +59,10 @@ compare(("基础版：12-1 动量 Top10", [plot_equity(base), show_stats(base["s
 
 右表的 **"不做波动率目标"** 一行就是消融：保留风险调整信号、缓冲区、逆波加权，只去掉波动率目标。
 
-- 去掉后年化从 4.7% 变成 **−2.1%**，最大回撤从 −55% 扩大到 −76%。
+- 去掉后年化从 `{python} P(sp.loc[nP, "年化收益"])` 变成 **`{python} P(sp.loc[nRaw, "年化收益"])`**，最大回撤从 `{python} P(sp.loc[nP, "最大回撤"], 0)` 扩大到 `{python} P(sp.loc[nRaw, "最大回撤"], 0)`。
   **增强版几乎全部的改进来自仓位管理，而不是选股信号。** 在弱信号上，"什么时候少押一点"比"押哪只"更有价值。
-- 风险调整 + 缓冲 + 逆波本身没有跑赢基础版：波动率从 38% 降到 32%，但收益也降了。
-- 增强版回撤仍有 −55%：波动率目标只能在波动**已经**升高后降仓，对突然的崩溃反应不过来。
+- 风险调整 + 缓冲 + 逆波本身没有跑赢基础版：波动率从 `{python} P(sp.loc[nB, "年化波动"], 0)` 降到 `{python} P(sp.loc[nRaw, "年化波动"], 0)`，但收益也降了（`{python} P(sp.loc[nB, "年化收益"])` → `{python} P(sp.loc[nRaw, "年化收益"])`）。
+- 增强版回撤仍有 `{python} P(sp.loc[nP, "最大回撤"], 0)`：波动率目标只能在波动**已经**升高后降仓，对突然的崩溃反应不过来。
 
 ## 4. 波动率目标在做什么
 
@@ -64,11 +73,11 @@ fig.update_traces(line_shape="hv", fill="tozeroy", line_color=viz.color_of(plus[
 compare(("波动率目标仓位", [fig]), ("基础版各年收益", [plot_yearly(base["equity"])]))
 ```
 
-全期平均仓位约 74%。2018 年约 70%，2020~2021 降到 50%~60%，2022 约 66%，2023~2024 又回到接近满仓。对照右图：
+全期平均仓位约 `{python} P(expo.mean(), 0)`。按年平均：2018 年 `{python} P(ey[2018], 0)`，2020 年 `{python} P(ey[2020], 0)`，2021 年 `{python} P(ey[2021], 0)`，2022 年 `{python} P(ey[2022], 0)`，2023 年 `{python} P(ey[2023], 0)`。对照右图：
 
-- 2020 动量 Top10 大涨 60%，但这年波动高、仓位只有约 58%：**波动率目标同样会砍掉上涨**。
-- 2022 抱团瓦解时仓位偏低，躲过了一部分下跌。
-- 2023 动量 Top10 跌了 32%，但这是一次**低波动的阴跌**，仓位接近满仓，没起到保护作用。
+- 2020 动量 Top10 大涨 `{python} P(yr[2020], 0)`，但这年波动高、仓位只有约 `{python} P(ey[2020], 0)`：**波动率目标同样会砍掉上涨**。
+- 2021~2022 抱团瓦解时仓位偏低，躲过了一部分下跌（2022 年动量 Top10 `{python} P(yr[2022], 0)`）。
+- 2023 动量 Top10 跌了 `{python} P(-yr[2023], 0)`，但这是一次**低波动的阴跌**，仓位约 `{python} P(ey[2023], 0)`，没起到保护作用。
 
 波动率目标管的是风险的**大小**，不预测**方向**；它只对"高波动下跌"有效。
 
@@ -79,7 +88,7 @@ compare(("cap300（无偏）", [show_stats(plus["stats"], COLS)]),
         ("上证 50 当前成分股（有偏）", [show_stats(plusB["stats"], COLS)]))
 ```
 
-在有偏池里增强版年化（18.3%）**低于**基础版（25.1%）：池子全是事后赢家，越集中、越满仓越赚，任何降风险措施都"吃亏"。
+在有偏池里增强版年化（`{python} P(spB.iloc[0]["年化收益"])`）**低于**基础版（`{python} P(spB.iloc[2]["年化收益"])`）：池子全是事后赢家，越集中、越满仓越赚，任何降风险措施都"吃亏"。
 只有在无偏池里，风险控制的价值才显现。见 [生存偏差](survivorship.qmd)。
 
 ## 6. 执行：换手控制在大资金下的价值
@@ -99,8 +108,7 @@ $$
 平方根意味着：交易量翻 4 倍，单位冲击翻 2 倍，总冲击成本翻 8 倍。
 
 ```{python}
-tv = ex["turnover_value"].reset_index()
-df = tv.pivot(index="资金", columns="策略", values="年化收益")
+df = tv.reset_index().pivot(index="资金", columns="策略", values="年化收益")
 fig = plot_lines(df, fmt=".2%", xaxis_type="log", xaxis_title="资金（元）",
                  yaxis_tickformat=".0%", hovermode="x unified")
 fig.update_traces(mode="lines+markers")
@@ -108,5 +116,5 @@ compare(("年化收益 vs 资金规模（对数轴）", [fig]),
         ("明细", [show_stats(ex["turnover_value"], ["年化收益", "夏普比率", "总成本(年化bp)", "年化双边换手"])]))
 ```
 
-- 两者换手相近（约 9 倍/年），但增强版持有低波动股票、持仓分散，冲击更低：100 万时差 4 个点，10 亿时差 5.6 个点。
+- 两者换手相近（约 9 倍/年），但增强版持有低波动股票、持仓分散，冲击更低。年化差距 100 万时 `{python} P(gap(1e6))`，10 亿时 `{python} P(gap(1e9))`：**资金越大，换手控制越值钱**。
 - 50 亿那一档增强版反而比 10 亿略好：参与率上限让部分订单放弃成交，成本被封顶。这是**模型假象**，不是真实可得的收益。

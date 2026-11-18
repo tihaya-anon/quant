@@ -53,6 +53,8 @@ compare(("IC 汇总（cap300，2017~2026，月度）", [show_stats(ics)]), ("12 
 
 ```{python}
 corr = base["factor_corr"]
+_t = corr.loc[["价值EP", "价值BP", "低波动"], ["价值EP", "价值BP", "低波动"]]
+tri = pd.Series([_t.iloc[0, 1], _t.iloc[0, 2], _t.iloc[1, 2]])
 fig = go.Figure(go.Heatmap(z=corr.values, x=corr.columns, y=corr.index, colorscale=viz.DIVERGING, zmin=-1, zmax=1,
                            text=corr.round(2).values, texttemplate="%{text}", xgap=2, ygap=2,
                            hovertemplate="%{y} × %{x}: %{z:.2f}<extra></extra>"))
@@ -63,10 +65,10 @@ fig2 = plot_lines(lay, fmt=".2f", height=380, yaxis_type="log")
 compare(("横截面 Spearman 相关（各期平均）", [fig]), ("五分组净值（按复合因子，未扣费）", [fig2]))
 ```
 
-- EP、BP、低波动两两相关 0.55~0.70：它们部分在描述同一件事（便宜的大盘股往往波动也低）。等权合成时，这三个因子实际被**重复计权**。
+- EP、BP、低波动两两相关 `{python} F(tri.min())`~`{python} F(tri.max())`：它们部分在描述同一件事（便宜的大盘股往往波动也低）。等权合成时，这三个因子实际被**重复计权**。
 - 动量与价值、低波动负相关：组合里放进动量能带来分散。
-- 五分组：期末净值 Q1→Q5 依次为 `{python} layer_txt`，**单调递增**，且主要差距在 Q5。
-  单调性比"Q5 赚钱"更重要：它说明因子在整个横截面上都有区分度，而不是靠少数极端股票。
+- 五分组：期末净值 Q1→Q5 依次为 `{python} layer_txt`。Q1 最差、Q5 最好，中间三组**不严格单调**，主要差距集中在两端。
+  理想的因子应该是单调的：那说明它在整个横截面上都有区分度。这里的形态说明复合因子主要擅长识别"最好"和"最差"的一小撮股票。
 
 ## 3. 从因子到组合
 
@@ -80,6 +82,7 @@ IC 加权只用**截至上月已经实现**的 IC（月末 $t$ 的 IC 要等到 
 
 ```{python}
 fw = plus["factor_weights"]
+fwy = fw.groupby(fw.index.year).mean()
 fig = go.Figure()
 for c in fw.columns:
     fig.add_scatter(x=fw.index, y=fw[c], name=c, stackgroup="w", hovertemplate="%{y:.0%}")
@@ -89,7 +92,7 @@ compare(("滚动 IC 权重（堆叠）", [fig]), ("消融", [show_stats(sp, cols
 ```
 
 - 小市值的权重 2018 年起基本为 0：IC 加权自动"关掉"了在这个股票池里失效的因子。
-- **反面教材**：动量的权重在 2020 年升到约 60%、2021 年约 90%，正是抱团行情的顶部；2022 年动量崩溃，权重才降下来。
+- **反面教材**：动量的权重在 2020 年升到约 `{python} P(fwy.loc[2020, "动量12-1"], 0)`、2021 年约 `{python} P(fwy.loc[2021, "动量12-1"], 0)`，正是抱团行情的顶部；2022 年动量崩溃，权重才降下来。
   滚动 IC 加权本质上是"对因子做动量"，它总是**追随**过去两年最好的因子，在因子轮动的拐点会慢一拍。
 - 但只看合成因子的 IC，IC 加权（`{python} F(plus["composite_ic"]["IC加权复合"], 4)`）并不比等权（`{python} F(plus["composite_ic"]["基础版复合"], 4)`）高。
   **改进主要来自组合构建**，不是因子权重：持仓从 10 只扩到 30 只降低了个股噪声，缓冲区把换手从 `{python} P(sp.iloc[2]["月均单边换手"], 0)` 降到 `{python} P(sp.loc[nP, "月均单边换手"], 0)`。
