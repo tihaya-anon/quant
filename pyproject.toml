@@ -5,8 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "backtrader>=1.9.78.123",
     "baostock>=0.9.4",
     "jinja2>=3.1.6",
+    "polars>=2.1.0",
+    "pyarrow>=26.0.1",
     "vectorbt[full,rust]>=1.2.1",
 ]
 

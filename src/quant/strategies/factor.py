@@ -29,8 +29,11 @@ def compute_factors(panel: dict) -> dict[str, pd.DataFrame]:
     close = panel["close"]
     ret = close.pct_change()
     pe, pb = panel["peTTM"], panel["pbMRQ"]
-    turn = panel["turn"].where(panel["turn"] > 0)
-    float_cap = (panel["amount"] / (turn / 100)).rolling(20, min_periods=10).median()
+    if "circ_mv" in panel:  # 本地数据包直接提供流通市值
+        float_cap = panel["circ_mv"].where(panel["circ_mv"] > 0)
+    else:  # baostock 没有市值：用 成交额 / 换手率 反推
+        turn = panel["turn"].where(panel["turn"] > 0)
+        float_cap = (panel["amount"] / (turn / 100)).rolling(20, min_periods=10).median()
     return {
         "价值EP": 1 / pe.where(pe != 0),
         "价值BP": 1 / pb.where(pb > 0),
@@ -98,7 +101,7 @@ def run(panel: dict, top_n: int = 10) -> dict:
         {
             f"复合因子 Top{top_n}": pf.value(),
             "股票池等权": bt.backtest_weights(panel, w_all).value(),
-            "上证50指数": bt.benchmark_value(panel),
+            bt.config.BENCHMARK_NAME: bt.benchmark_value(panel),
         }
     )
 

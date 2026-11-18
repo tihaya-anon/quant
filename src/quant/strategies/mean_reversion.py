@@ -31,7 +31,8 @@ def signals(close: pd.DataFrame, window: int, k: float) -> tuple[pd.DataFrame, p
 
 def _run_one(panel: dict, close, open_, window: int, k: float):
     entries, exits = signals(panel["close"], window, k)
-    return bt.backtest_signals(close, open_, entries, exits, panel["tradable"], sl_stop=STOP_LOSS)
+    entries = entries & panel["tradable"].reindex_like(entries).fillna(False)  # 只在当时是成分股时开仓
+    return bt.backtest_signals(close, open_, entries, exits, bt.exec_mask(panel), sl_stop=STOP_LOSS)
 
 
 def _combined_value(pf) -> pd.Series:
@@ -45,7 +46,8 @@ def run(panel: dict, window: int = 20, k: float = 2.0, example: str = "sh.600519
     # 只回测在回测起点前已上市的股票，避免上市前资金闲置拉低组合收益
     listed = panel["close"].loc[:config.BACKTEST_START].iloc[-1].notna()
     cols = listed[listed].index
-    sub = {**panel, "close": panel["close"][cols], "tradable": panel["tradable"][cols]}
+    sub = {**panel, "close": panel["close"][cols], "tradable": panel["tradable"][cols],
+           "can_trade": bt.exec_mask(panel)[cols]}
     close, open_ = close[cols], open_[cols]
 
     pf = _run_one(sub, close, open_, window, k)
@@ -54,7 +56,7 @@ def run(panel: dict, window: int = 20, k: float = 2.0, example: str = "sh.600519
         {
             f"均值回归 BB({window},{k})": _combined_value(pf),
             "买入持有(等额)": (bh / bh.iloc[0]).mean(axis=1) * config.INIT_CASH,
-            "上证50指数": bt.benchmark_value(panel),
+            bt.config.BENCHMARK_NAME: bt.benchmark_value(panel),
         }
     )
 

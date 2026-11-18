@@ -50,7 +50,7 @@ def run(panel: dict, lookback: int = 252, top_n: int = 10) -> dict:
             f"动量 Top{top_n}": pf_top.value(),
             f"动量 Bottom{top_n}": pf_bottom.value(),
             "股票池等权": pf_all.value(),
-            "上证50指数": bt.benchmark_value(panel),
+            bt.config.BENCHMARK_NAME: bt.benchmark_value(panel),
         }
     )
 

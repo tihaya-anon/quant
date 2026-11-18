@@ -33,17 +33,33 @@ def _exec_prices(panel: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
 # ---------------------------------------------------------------- 回测
 
 
-def backtest_weights(panel: dict, weights: pd.DataFrame, start: str = config.BACKTEST_START) -> vbt.Portfolio:
+def backtest_weights(panel: dict, weights: pd.DataFrame, start: str = config.BACKTEST_START,
+                     fill_missing: bool = True) -> vbt.Portfolio:
     """按目标权重调仓（组合层面共享资金）。
 
     weights: index 为调仓信号日（收盘后决定），columns 为股票代码，行内权重和 <= 1。
     在下一交易日开盘按目标权重调仓；停牌/不可交易的股票当天不下单（保持原仓位）。
+    fill_missing=False 时，调仓日行内的 NaN 表示"该股票不动"（只对有值的股票下单）。
     """
     close, open_ = _exec_prices(panel)
-    target = weights.reindex(close.index).reindex(columns=close.columns)
-    target.loc[weights.index] = target.loc[weights.index].fillna(0.0)
+    return backtest_target(close, open_, weights, exec_mask(panel), start, fill_missing)
+
+
+def exec_mask(panel: dict) -> pd.DataFrame:
+    """能否成交（未停牌）。区别于 tradable（能否被选入：还要求当时是成分股、非 ST）。"""
+    return panel.get("can_trade", panel["tradable"])
+
+
+def backtest_target(close: pd.DataFrame, open_: pd.DataFrame, weights: pd.DataFrame,
+                    tradable: pd.DataFrame | None = None, start: str = config.BACKTEST_START,
+                    fill_missing: bool = True) -> vbt.Portfolio:
+    """通用目标权重回测（价格可以是股票、指数/ETF）。t 日信号 -> t+1 日开盘成交。"""
+    target = weights.reindex(close.index).reindex(columns=close.columns).astype(float)
+    if fill_missing:
+        target.loc[weights.index] = target.loc[weights.index].fillna(0.0)
     target = target.shift(1)  # t 日信号 -> t+1 日执行
-    target = target.where(panel["tradable"].reindex_like(target).fillna(False).astype(bool))
+    if tradable is not None:
+        target = target.where(tradable.reindex_like(target).fillna(False).astype(bool))
 
     sl = slice(start, None)
     return vbt.Portfolio.from_orders(

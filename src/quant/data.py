@@ -22,8 +22,12 @@ STOCK_FIELDS = "date,code,open,high,low,close,volume,amount,turn,tradestatus,peT
 INDEX_FIELDS = "date,code,open,high,low,close,volume,amount"
 NUMERIC = ["open", "high", "low", "close", "volume", "amount", "turn", "tradestatus", "peTTM", "pbMRQ", "isST"]
 
-PANEL_FILE = config.PROCESSED_DIR / "panel.pkl"
-UNIVERSE_FILE = config.PROCESSED_DIR / "universe.csv"
+PANEL_FILE = config.PROCESSED_DIR / f"panel_{config.UNIVERSE}.pkl"
+UNIVERSE_FILE = config.PROCESSED_DIR / f"universe_{config.UNIVERSE}.csv"
+MEMBERSHIP_FILE = config.PROCESSED_DIR / f"membership_{config.UNIVERSE}.csv"
+
+# 各股票池由哪些指数的成分组成
+_PIT_INDICES = {"sz50_pit": ["sz50"], "hs300_pit": ["hs300"], "zz800_pit": ["hs300", "zz500"]}
 
 
 # ---------------------------------------------------------------- baostock 访问
@@ -32,11 +36,13 @@ UNIVERSE_FILE = config.PROCESSED_DIR / "universe.csv"
 def _login() -> None:
     lg = bs.login()
     if lg.error_code != "0":
-        raise RuntimeError(f"baostock 登录失败: {lg.error_msg}")
+        hint = "（IP 可能因请求过于频繁被封：等待一段时间或更换网络后重试，并保持低并发）" if "黑名单" in lg.error_msg else ""
+        raise RuntimeError(f"baostock 登录失败: {lg.error_msg}{hint}")
     atexit.register(bs.logout)
 
 
 def _rows(rs) -> pd.DataFrame:
+    time.sleep(config.REQUEST_INTERVAL)  # 限速，避免被 baostock 封禁
     if rs.error_code != "0":
         raise RuntimeError(rs.error_msg)
     rows = []
@@ -45,10 +51,51 @@ def _rows(rs) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=rs.fields)
 
 
+_QUERY = {"sz50": "query_sz50_stocks", "hs300": "query_hs300_stocks", "zz500": "query_zz500_stocks"}
+
+
+def fetch_constituents(index: str, date: str = "") -> pd.DataFrame:
+    """查询某日的指数成分股（需已登录；date 为空表示最新）。返回列: code, code_name。"""
+    return _rows(getattr(bs, _QUERY[index])(date=date))[["code", "code_name"]]
+
+
+def fetch_membership(name: str = config.UNIVERSE) -> pd.DataFrame:
+    """逐月末查询历史成分股，返回长表 (date, index, code, code_name)。可断点续跑。"""
+    done = pd.read_csv(MEMBERSHIP_FILE, parse_dates=["date"]) if MEMBERSHIP_FILE.exists() else pd.DataFrame(
+        columns=["date", "index", "code", "code_name"])
+    have = set(zip(done["date"].dt.strftime("%Y-%m-%d"), done["index"])) if len(done) else set()
+    # 自然月末（非交易日也可查询，返回当日有效的成分）+ 最新一天
+    dates = [d.strftime("%Y-%m-%d") for d in pd.date_range(config.START_DATE, config.END_DATE, freq="ME")]
+    dates.append(config.END_DATE)
+    parts = [done]
+    for idx in _PIT_INDICES[name]:
+        for d in dates:
+            if (d, idx) in have:
+                continue
+            df = fetch_constituents(idx, d)
+            if df.empty:
+                print(f"  {idx} {d}: 无数据（跳过）")
+                continue
+            df.insert(0, "index", idx)
+            df.insert(0, "date", pd.Timestamp(d))
+            parts.append(df)
+            print(f"  {idx} {d}: {len(df)} 只", flush=True)
+            # 每次都落盘，便于中断后续跑
+            pd.concat(parts, ignore_index=True).to_csv(MEMBERSHIP_FILE, index=False)
+    out = pd.concat(parts, ignore_index=True)
+    out["date"] = pd.to_datetime(out["date"])
+    return out
+
+
 def fetch_universe(name: str = config.UNIVERSE) -> pd.DataFrame:
-    """查询指数成分股（需已登录）。返回列: code, code_name。"""
-    query = {"sz50": bs.query_sz50_stocks, "hs300": bs.query_hs300_stocks}[name]
-    return _rows(query())[["code", "code_name"]]
+    """股票池全部代码（需已登录）。返回列: code, code_name。
+
+    *_pit 股票池返回样本期内**所有曾经入选**的股票（含已退市），同时写出成分历史。
+    """
+    if name in _PIT_INDICES:
+        m = fetch_membership(name)
+        return m.sort_values("date").drop_duplicates("code", keep="last")[["code", "code_name"]]
+    return fetch_constituents(name)
 
 
 def fetch_daily(code: str, is_index: bool = False) -> pd.DataFrame:
@@ -132,6 +179,19 @@ def build_panel() -> dict[str, pd.DataFrame]:
     status = wide(stocks, "tradestatus")
     is_st = wide(stocks, "isST")
     panel["tradable"] = (status == 1) & (is_st == 0) & panel["open"].notna()
+    # 历史成分：每个月末快照从该日起生效（向前填充），只有当时是成分股才允许被选入
+    if MEMBERSHIP_FILE.exists():
+        m = pd.read_csv(MEMBERSHIP_FILE, parse_dates=["date"])
+        snap = m.assign(v=True).pivot_table(index="date", columns="code", values="v", aggfunc="any")
+        snap = snap.reindex(columns=panel["close"].columns).astype("boolean").fillna(False)
+        member = snap.reindex(snap.index.union(calendar)).ffill().reindex(calendar)
+        panel["member"] = member.fillna(False).astype(bool)
+    else:  # 旧版"当前成分股"股票池：视为一直是成分股
+        panel["member"] = panel["close"].notna()
+    panel["tradable"] &= panel["member"]
+    # 注意：tradable 同时控制"能否选入"和"能否成交"。被剔出成分的持仓在 vectorbt 版回测中
+    # 会在下一次调仓时因权重为 0 而需要卖出——这里另存 can_trade 供卖出使用。
+    panel["can_trade"] = (status == 1) & panel["open"].notna()
     # 停牌日价格前值填充，用于估值（上市前保持 NaN）
     panel["close"] = panel["close"].ffill()
     panel["index_close"] = wide(indices, "close")
@@ -145,11 +205,15 @@ def build_panel() -> dict[str, pd.DataFrame]:
 
 def load_panel() -> dict[str, pd.DataFrame]:
     if not PANEL_FILE.exists():
-        raise FileNotFoundError("未找到面板数据，请先运行: uv run python -m quant.data")
+        hint = "quant.local_data all" if config.UNIVERSE.startswith("cap") else "quant.data"
+        raise FileNotFoundError(f"未找到面板 {PANEL_FILE}，请先运行: uv run python -m {hint}")
     return pd.read_pickle(PANEL_FILE)
 
 
 def main() -> None:
+    if config.UNIVERSE.startswith("cap"):
+        print(f"UNIVERSE={config.UNIVERSE} 使用本地数据包，请运行: uv run python -m quant.local_data all")
+        return
     p = argparse.ArgumentParser(description="下载 baostock 数据并构建面板")
     p.add_argument("--force", action="store_true", help="忽略缓存重新下载")
     p.add_argument("--build-only", action="store_true", help="只重建面板，不下载")
