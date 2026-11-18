@@ -1,0 +1,37 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "A股量化学习笔记"
+  sidebar:
+    style: docked
+    contents:
+      - index.qmd
+      - section: "专题"
+        contents:
+          - survivorship.qmd
+      - section: "策略"
+        contents:
+          - momentum.qmd
+  page-footer: "学习项目，非投资建议。"
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    page-layout: full
+    html-math-method: mathjax
+    code-fold: true
+    code-summary: "代码"
+    lang: zh
+    css: styles.css
+    grid:
+      body-width: 1200px
+    include-in-header: _plotly.html
+
+execute:
+  echo: false
+  warning: false
+  freeze: false

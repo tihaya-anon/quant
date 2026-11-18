@@ -11,3 +11,6 @@ wheels/
 data/
 logs/
 reports/
+report/_site/
+report/.quarto/
+report/_freeze/

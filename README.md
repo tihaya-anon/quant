@@ -24,8 +24,8 @@ src/quant/
     factor.py             # 滚动 IC 加权、市值中性化、缓冲区
   execution.py            # backtrader 事件驱动执行：费用/印花税/价差/平方根冲击/参与率/涨跌停/停牌/整手
   run_exec.py             # 执行仿真实验：对账、成本分解、资金容量、敏感性
-  viz.py                  # plotly 绘图样式
-  report.py               # 汇总结果 → reports/<股票池>.html
+  viz.py                  # plotly 绘图样式与结果读取，供 report/ 使用
+report/                   # Quarto 学习笔记（.qmd：正文 + 公式 + plotly 图表）
 ```
 
 ## 股票池
@@ -51,7 +51,7 @@ uv run python -m quant.data             # *_pit / sz50：从 baostock 下载（�
 
 uv run python -m quant.run        # 基础版 + 增强版
 uv run python -m quant.run_exec   # 执行仿真（较慢，--quick 只跑小资金）
-uv run python -m quant.report     # 生成 reports/<股票池>.html，浏览器打开即可
+uv run quarto preview report      # 本地预览；quarto render report → report/_site/
 
 # 对比有偏股票池：
 QUANT_UNIVERSE=sz50 uv run python -m quant.run

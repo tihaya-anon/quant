@@ -1,0 +1,37 @@
+/* 双栏对比：固定两列，按行对齐（标题 / 图 / 表）；窄屏才退化为单列 */
+.q-compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 24px;
+  row-gap: 8px;
+  margin: 1em 0 1.5em;
+}
+.q-head {
+  font-weight: 600;
+  font-size: 1.02rem;
+  padding-bottom: 4px;
+  border-bottom: 2px solid #e1e0d9;
+}
+.q-cell { min-width: 0; overflow-x: auto; }
+.q-cell table, .q-single table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.q-cell th, .q-cell td, .q-single th, .q-single td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #e1e0d9;
+  text-align: right;
+  white-space: nowrap;
+}
+.q-cell th:first-child, .q-cell td:first-child,
+.q-single th:first-child, .q-single td:first-child {
+  text-align: left;
+  white-space: normal;
+  min-width: 13em;
+}
+.q-single { margin: 1em 0; }
+@media (max-width: 900px) {
+  .q-compare { grid-template-columns: minmax(0, 1fr); }
+}
