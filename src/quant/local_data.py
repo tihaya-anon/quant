@@ -7,7 +7,8 @@
 数据包格式（已核对）：
 - 全A日K/<年>.zip -> <年>/<代码>.csv，列：code, datetime, OHLC(不复权), pre_close, volume(手), amount(千元),
   turnover(%), pe_ttm, pb, dv_ttm, total_mv/circ_mv(万元) 等
-- 复权因子_后复权.zip -> <代码>.csv，列：股票代码, 交易日期, 复权因子；后复权价 = 不复权价 × 因子
+- 复权因子_后复权.zip -> <代码>.csv，列：股票代码, 交易日期, 复权因子。只转换存档，build 不再使用：
+  它带有每日约 0.2% 的取整噪声，build 改用日K的 pre_close 重建复权因子（见 build 内注释）
 - 注意：数据包**不含已退市股票**（只有复权因子包有），也没有 ST 标记和指数成分。
 
 股票池（point-in-time，按当时的数据选）：
@@ -217,12 +218,20 @@ def build(universe: str = config.UNIVERSE) -> dict:
     codes = list(member.columns)
     print(f"股票池 {universe}: 曾入池 {len(codes)} 只  ({time.time() - t:.0f}s)")
 
-    # 2) 只对这些股票合并复权因子、换算单位，然后才物化到内存
-    adj = _dedupe(pl.scan_parquet(ADJ_OUT), "复权因子")
+    # 2) 只对这些股票计算复权因子、换算单位，然后才物化到内存
+    #
+    # 复权因子用日K自带的 pre_close 自行重建，而不是数据包的复权因子文件：
+    # 后者几乎每天都有约 0.2% 的取整噪声（像是由取整后的复权价反推），
+    # 而交易所给出的 pre_close 在除权除息日已扣除分红/送转，
+    #   r_t = close_{t-1} / pre_close_t，  adj_t = Π r_s
+    # 只在除权日 r≠1，复权收益 close_t·adj_t / (close_{t-1}·adj_{t-1}) - 1 恰好等于 close_t / pre_close_t - 1。
+    # A 股除权只会让 pre_close 低于前收，r<1 视为数据瑕疵按 1 处理。
     long = (lf.filter(pl.col("code").is_in(codes))
-            .join(adj.filter(pl.col("code").is_in(codes)), on=["code", "datetime"], how="left")
             .sort("code", "datetime")
-            .with_columns(pl.col("adj").forward_fill().over("code").fill_null(1.0))  # 缺因子沿用前值
+            .with_columns(r=pl.col("close").shift(1).over("code") / pl.col("pre_close"))
+            .with_columns(r=pl.when(pl.col("r").is_finite() & (pl.col("r") > 1)).then(pl.col("r")).otherwise(1.0))
+            .with_columns(adj=pl.col("r").cum_prod().over("code"))
+            .drop("r")
             .with_columns(
                 *[(pl.col(c) * pl.col("adj")).alias(c) for c in ["open", "high", "low", "close"]],
                 pl.col("volume") * 100,  # 手 -> 股

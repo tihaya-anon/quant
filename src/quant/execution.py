@@ -48,7 +48,8 @@ class ExecConfig:
     transfer_fee: float = 0.00001
     stamp_old: float = 0.001
     stamp_new: float = 0.0005
-    tick: float = 0.01
+    tick: float = 0.01  # 股票最小报价单位（元）
+    etf_tick: float = 0.001  # ETF 最小报价单位（元）
     min_half_spread: float = 0.0002
     impact_eta: float = 0.7
     participation: float = 0.10  # 单日最多成交当日成交额的 10%
@@ -62,7 +63,7 @@ class ExecConfig:
     @classmethod
     def frictionless(cls, cash: float = 10_000_000) -> "ExecConfig":
         return cls(cash=cash, commission=0, min_commission=0, transfer_fee=0, stamp_old=0, stamp_new=0,
-                   tick=0, min_half_spread=0, impact_eta=0, participation=1e9, lot=1, limits=False, costs=False,
+                   tick=0, etf_tick=0, min_half_spread=0, impact_eta=0, participation=1e9, lot=1, limits=False, costs=False,
                    min_trade_frac=0, cash_buffer=0.01)
 
 
@@ -150,7 +151,8 @@ def cost_parts(cfg: ExecConfig, d, size: float, price: float, is_etf: bool) -> d
     if size < 0 and not is_etf:
         tax = value * (cfg.stamp_old if date < STAMP_DUTY_CUT else cfg.stamp_new)
     raw_px = d.raw_px[0]
-    half_spread = max(cfg.tick / 2 / raw_px, cfg.min_half_spread) if raw_px > 0 else cfg.min_half_spread
+    tick = cfg.etf_tick if is_etf else cfg.tick
+    half_spread = max(tick / 2 / raw_px, cfg.min_half_spread) if raw_px > 0 else cfg.min_half_spread
     adv, sigma = d.adv[0], d.sigma[0]
     impact = cfg.impact_eta * sigma * math.sqrt(value / adv) if adv > 0 else 0.0
     return {

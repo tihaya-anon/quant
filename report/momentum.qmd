@@ -90,11 +90,11 @@ $$
 c = \underbrace{\max\!\Big(0.025\%,\ \tfrac{5\text{元}}{Q}\Big)}_{\text{佣金}}
   + \underbrace{0.001\%}_{\text{过户费}}
   + \underbrace{\tau_t\,\mathbb 1_{\text{卖}}}_{\text{印花税}}
-  + \underbrace{\max\!\Big(\tfrac{0.01}{2P},\ 0.02\%\Big)}_{\text{半价差}}
+  + \underbrace{\max\!\Big(\tfrac{\delta}{2P},\ 0.02\%\Big)}_{\text{半价差}}
   + \underbrace{\eta\,\sigma\sqrt{Q/\text{ADV}}}_{\text{冲击}}
 $$
 
-印花税 $\tau_t$ 在 2023-08-28 前为 0.1%，之后为 0.05%；半价差取"最小报价单位 0.01 元的一半"与 2bp 中较大者。冲击项是**平方根法则**：$\sigma$ 为日波动率，$\text{ADV}$ 为日均成交额，$\eta=0.7$。
+印花税 $\tau_t$ 在 2023-08-28 前为 0.1%，之后为 0.05%；半价差取"最小报价单位 $\delta$（股票 0.01 元）的一半"与 2bp 中较大者。冲击项是**平方根法则**：$\sigma$ 为日波动率，$\text{ADV}$ 为日均成交额，$\eta=0.7$。
 单笔成交额 $Q$ 不超过当日成交额的 10%（参与率上限），超出部分顺延或放弃。
 平方根意味着：交易量翻 4 倍，单位冲击翻 2 倍，总冲击成本翻 8 倍。
 

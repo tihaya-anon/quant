@@ -53,6 +53,9 @@ uv run python -m quant.run        # 基础版 + 增强版
 uv run python -m quant.run_exec   # 执行仿真（较慢，--quick 只跑小资金）
 uv run quarto preview report      # 本地预览；quarto render report → report/_site/
 
+# 或一键后台全流程（面板 → 回测 → 执行仿真 → 笔记，约 1 小时）：
+scripts/rebuild_all.sh            # 进度：tail -f logs/rebuild_all.log
+
 # 对比有偏股票池：
 QUANT_UNIVERSE=sz50 uv run python -m quant.run
 ```

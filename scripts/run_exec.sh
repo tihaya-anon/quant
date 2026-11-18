@@ -9,7 +9,8 @@
 #
 # 查看进度：  tail -f logs/run_exec.log
 # 中途停止：  pkill -f quant.run_exec
-# 跑完后结果在 data/results/<股票池>/execution.pkl，打开 notebooks/enhanced.ipynb 查看。
+# 跑完后结果在 data/results/<股票池>/execution.pkl，再 uv run quarto render report 更新笔记。
+# 全流程（面板 + 回测 + 执行 + 笔记）用 scripts/rebuild_all.sh。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p logs
