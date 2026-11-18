@@ -1,4 +1,4 @@
-"""Notebook 共用的 plotly 样式与绘图函数（从 strategies.ipynb 抽出复用）。"""
+"""plotly 样式与绘图函数，供 quant.report 生成 HTML 报表。各函数返回 Figure。"""
 
 from __future__ import annotations
 
@@ -28,11 +28,11 @@ PCT_COLS = ["累计收益", "年化收益", "年化波动", "最大回撤", "日
 BENCH_WORDS = ("指数", "买入持有", "股票池等权")
 
 
-def show_stats(stats: pd.DataFrame):
+def stats_html(stats: pd.DataFrame) -> str:
     fmt = {c: "{:.1%}" for c in stats.columns if c in PCT_COLS}
     fmt.update({c: "{:.2f}" for c in stats.columns if c not in PCT_COLS})
     fmt.update({c: "{:.0f}" for c in stats.columns if "bp" in c or "次数" in c or "订单" in c})
-    return stats.style.format(fmt, na_rep="–")  # type: ignore
+    return stats.style.format(fmt, na_rep="–").to_html()  # type: ignore
 
 
 def color_of(name: str, i: int) -> str:
@@ -56,7 +56,7 @@ def plot_equity(res: dict, title: str, cols: list[str] | None = None):
     fig.update_yaxes(type="log", title_text="净值（对数）", row=1, col=1)
     fig.update_yaxes(tickformat=".0%", title_text="回撤", row=2, col=1)
     fig.update_layout(title=title, height=600)
-    fig.show()
+    return fig
 
 
 def plot_grid(grid: pd.DataFrame, metric: str, title: str, fmt: str = ".2f"):
@@ -70,4 +70,4 @@ def plot_grid(grid: pd.DataFrame, metric: str, title: str, fmt: str = ".2f"):
     ))
     fig.update_layout(title=title, xaxis_title=m.columns.name, yaxis_title=m.index.name, hovermode="closest",
                       height=380, xaxis=dict(type="category", showgrid=False), yaxis=dict(type="category", showgrid=False))
-    fig.show()
+    return fig
