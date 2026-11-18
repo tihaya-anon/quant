@@ -45,7 +45,8 @@ report/                   # Quarto 学习笔记（.qmd：正文 + 公式 + plotl
 
 ```bash
 uv sync
-# 数据（二选一）
+# 数据（三选一）
+scripts/data_release.sh fetch            # 从私有仓库 tihaya-anon/quant-data 的 Release 下载全部数据（需有访问权限）
 uv run python -m quant.local_data all   # cap300/cap800：从购买的日K数据包构建（路径见 local_data.py / QUANT_LOCAL_SRC）
 uv run python -m quant.data             # *_pit / sz50：从 baostock 下载（注意限速，过快会被封 IP）
 
