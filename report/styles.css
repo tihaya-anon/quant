@@ -16,11 +16,11 @@
 .q-cell table, .q-single table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-variant-numeric: tabular-nums;
 }
 .q-cell th, .q-cell td, .q-single th, .q-single td {
-  padding: 4px 8px;
+  padding: 4px 6px;
   border-bottom: 1px solid #e1e0d9;
   text-align: right;
   white-space: nowrap;
@@ -29,7 +29,7 @@
 .q-single th:first-child, .q-single td:first-child {
   text-align: left;
   white-space: normal;
-  min-width: 13em;
+  min-width: 10em;
 }
 .q-single { margin: 1em 0; }
 @media (max-width: 900px) {

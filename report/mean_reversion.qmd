@@ -1,0 +1,100 @@
+---
+title: "均值回归"
+---
+
+```{python}
+%run _setup.py
+base, plus = load("cap300", "mean_reversion"), load("cap300", "mean_reversion_plus")
+oldB = load("sz50", "mean_reversion_plus")   # 早期在上证 50 上调出的版本
+sb, sp = base["stats"], plus["stats"]
+nP, nNo, nB = sp.index[0], sp.index[1], sb.index[0]
+ps = base["per_stock"]
+tr = plus["trades"].copy()
+tr["持有天数"] = (tr["Exit Timestamp"] - tr["Entry Timestamp"]).dt.days
+```
+
+## 1. 经济直觉
+
+**均值回归**押注短期价格偏离会修正。可能的来源：
+
+- **流动性提供**：有人因为非信息原因（赎回、爆仓、调仓）集中抛售，价格被暂时压低；买入者提供流动性，赚回补偿。
+- **过度反应**：投资者对短期坏消息反应过度，随后修正。
+
+它与动量并不矛盾：**时间尺度不同**。几天到一个月偏向反转，6~12 个月偏向动量。
+真正的风险是**分不清"错杀"和"真坏消息"**：后者价格不会回来，这就是"接飞刀"。
+
+## 2. 信号构造
+
+以 $N$ 日均线和标准差衡量偏离：
+
+$$
+Z_{i,t} = \frac{P_{i,t} - \mathrm{MA}_N(P_i)_t}{\mathrm{SD}_N(P_i)_t}
+$$
+
+$Z$ 下穿 $-k$（跌破布林下轨）买入，$Z>0$（回到均线）卖出。
+
+| | 基础版 | 增强版（均值回归+） |
+|---|---|---|
+| 入场 | $Z$ 下穿 $-2$ | $Z$ 下穿 $-2.5$，且个股 $P > \mathrm{MA}_{250}$，且沪深 300 $> \mathrm{MA}_{250}$ |
+| 出场 | $Z>0$ 或止损 10% | $Z>0$、持有满 30 天、较信号价跌 10%、被剔出股票池，任一触发 |
+| 资金 | 每只股票独立 $1/N$ 资金 | 共享资金池，20 个名额各 5%，信号多时优先买 $Z$ 最低的 |
+
+设计理由：
+
+- **基础版的资金利用率只有约 `{python} P(ps["持仓时间占比"].mean(), 0)`**：每只股票只在少数日子持仓，其余资金闲置，所以收益和波动都接近 0。共享资金池把闲置资金分给当下有信号的股票。
+- **个股趋势过滤**：只在长期上升趋势里买回调，过滤掉"趋势性下跌中的超跌"，那多半是真坏消息。
+- **大盘过滤**：熊市里超跌信号会成片出现，而且大多会继续跌。这是从上证 50 换到 cap300 后最关键的修正。
+
+## 3. 基础版 vs 增强版
+
+```{python}
+cols = ["年化收益", "年化波动", "夏普比率", "最大回撤", "平均仓位"]
+compare(("基础版：BB(20, 2.0)，每股独立资金", [plot_equity(base), show_stats(sb, cols)]),
+        ("增强版：均值回归+", [plot_equity(plus), show_stats(sp, cols)]))
+```
+
+- 基础版年化 `{python} P(sb.loc[nB, "年化收益"])`、波动 `{python} P(sb.loc[nB, "年化波动"])`：几乎没下注，谈不上策略。
+- 增强版年化 `{python} P(sp.loc[nP, "年化收益"])`、夏普 `{python} F(sp.loc[nP, "夏普比率"])`、最大回撤 `{python} P(sp.loc[nP, "最大回撤"], 0)`，平均仓位只有 `{python} P(sp.loc[nP, "平均仓位"], 0)`。
+- **消融**："无大盘过滤"一行年化 `{python} P(sp.loc[nNo, "年化收益"])`、最大回撤 `{python} P(sp.loc[nNo, "最大回撤"], 0)`。改进几乎全部来自"熊市不抄底"这一条。
+
+## 4. 参数网格：两个版本各自的敏感性
+
+```{python}
+compare(("基础版：窗口 N × 阈值 k（夏普）", [plot_grid(base["grid"], "夏普比率")]),
+        ("增强版：大盘均线窗口 × 阈值 k（夏普，0 = 不过滤）", [plot_grid(plus["grid"], "夏普比率")]))
+```
+
+- 基础版里 $k$ 越大越好（信号越少、越极端，质量越高），$k=1.5$ 全部为负。
+- 增强版只有"MA250 过滤 + $k=2.5$"这一格明显为正，周围的格子掉得很快。**单一亮点、周围平庸**的网格是过拟合的典型信号，应该打折看待。
+
+## 5. 过拟合的现场：参数从上证 50 搬到 cap300
+
+```{python}
+compare(("最初版本：在上证 50（有偏）上调参", [show_stats(oldB["stats"], cols)]),
+        ("修正后版本：cap300（无偏）", [show_stats(sp, cols)]))
+```
+
+最初版本（$k=2$、10 名额、只有个股趋势过滤）在上证 50 当前成分股上夏普
+`{python} F(oldB["stats"].iloc[0]["夏普比率"])`，看起来很好。原样搬到 cap300 后年化约 −5.6%、最大回撤约 −56%。
+原因有两个，叠加在一起：
+
+1. **生存偏差**：上证 50 当前成分股都"活下来了"，抄底总会涨回来；cap300 里有真正一路跌下去的股票。
+2. **参数对样本过拟合**：$k$、名额数都是在那 50 只股票上挑出来的。
+
+修正后的版本仍然只有 `{python} P(sp.loc[nP, "年化收益"])` 年化。结论：**大盘股上的抄底型均值回归，扣掉成本后收益很薄**。
+
+## 6. 交易层面
+
+```{python}
+win = (tr["PnL"] > 0).mean()
+fig = go.Figure(go.Histogram(x=tr["Return"], nbinsx=60, marker_color=viz.color_of(nP),
+                             hovertemplate="收益 %{x:.1%}<br>笔数 %{y}<extra></extra>"))
+fig.update_layout(xaxis_tickformat=".0%", hovermode="closest", height=320, xaxis_title="单笔收益")
+fig2 = go.Figure(go.Histogram(x=tr["持有天数"], nbinsx=40, marker_color=viz.BENCH,
+                              hovertemplate="%{x} 天<br>笔数 %{y}<extra></extra>"))
+fig2.update_layout(hovermode="closest", height=320, xaxis_title="持有天数（自然日）")
+compare(("增强版单笔收益分布", [fig]), ("持有天数分布", [fig2]))
+```
+
+共 `{python} len(tr)` 笔，胜率 `{python} P(win, 0)`，平均单笔收益 `{python} P(tr["Return"].mean(), 2)`，持有天数中位数 `{python} int(tr["持有天数"].median())` 天。
+这是均值回归的典型形态：**高胜率、小盈利、偶尔大亏**（左尾来自止损和持有到期）。分布左偏，所以胜率高不代表赚钱多。

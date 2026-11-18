@@ -1,0 +1,145 @@
+---
+title: "执行仿真"
+---
+
+```{python}
+%run _setup.py
+ex = load("cap300", "execution")
+rec, rs, vs = ex["reconcile"], ex["real_stats"], ex["vector_stats"]
+cap, sens = ex["capacity"], ex["sensitivity"]
+recS = rec.apply(lambda v: __import__("quant.backtest", fromlist=["x"]).perf_stats(v)).T
+```
+
+向量化回测（vectorbt）回答"信号好不好"，它假设**信号日次日开盘按目标权重全部成交、成本固定 0.2%**。
+这一页回答另一个问题：**在真实的 A 股交易规则下，这些权重能不能执行、要花多少钱、能容纳多少资金。**
+
+## 1. 为什么需要事件驱动
+
+向量化回测把整段历史当成矩阵一次算完，快，但很难表达"状态依赖"的规则：
+
+- 今天的订单**没成交完**，明天要继续撮合，剩余部分还可能过期；
+- 能不能成交取决于**当天的状态**（停牌、开盘涨停），而成交多少取决于**当天的成交额**；
+- 成本取决于**这笔订单相对市场的大小**，而不是固定比例。
+
+事件驱动框架（这里用 backtrader）逐根 K 线推进，订单有完整的生命周期：
+提交 → 接受 → 部分成交 → 完成/过期。我们不自己写撮合循环，只通过它的标准扩展点注入 A 股规则：
+
+| 扩展点 | 建模内容 |
+|---|---|
+| 数据源附加字段 | 成交额、20 日 ADV、20 日波动率（均滞后一天，避免未来函数）、能否成交、涨跌幅限制 |
+| 成交量撮合器（filler） | 停牌不成交；开盘涨停买不进、跌停卖不出；单日成交 ≤ 当日成交额 × 参与率上限；部分成交按整手 |
+| 佣金模型（CommInfo） | 佣金（最低 5 元）+ 过户费 + 印花税 + 半价差 + 平方根冲击 |
+| 策略（TargetWeights） | 信号日收盘按目标权重下单：先卖后买，未成交部分 5 个交易日内继续撮合 |
+
+## 2. 成本模型
+
+单笔成交额为 $Q$ 时，成本占成交额的比例：
+
+$$
+c = \underbrace{\max\!\Big(0.025\%,\ \tfrac{5\text{元}}{Q}\Big)}_{\text{佣金}}
+  + \underbrace{0.001\%}_{\text{过户费}}
+  + \underbrace{\tau_t\,\mathbb 1_{\text{卖}}}_{\text{印花税}}
+  + \underbrace{\max\!\Big(\tfrac{0.01}{2P},\ 0.02\%\Big)}_{\text{半价差}}
+  + \underbrace{\eta\,\sigma\sqrt{Q/\mathrm{ADV}}}_{\text{冲击}}
+$$
+
+**平方根冲击**是实证规律（Almgren 等, 2005；Tóth 等, 2011）：冲击与成交量的平方根成正比，而不是线性。
+直觉上，大单会被拆开执行，后续部分面对的是已经被推动过的价格，但市场也在不断补充流动性，两者平衡的结果接近平方根。
+推论：交易量翻 4 倍，单位冲击翻 2 倍，**总冲击成本翻 8 倍**（$Q \cdot \sqrt{Q} = Q^{1.5}$）。这就是资金容量存在上限的原因。
+
+参数：$\eta=0.7$，$\sigma$ 为个股日波动率，$\tau_t$ 在 2023-08-28 前为 0.1%、之后为 0.05%，参与率上限 10%。
+
+## 3. 对账：两个框架给出一致结果吗
+
+先把 backtrader 的所有成本关掉、vectorbt 的成本也设为 0，喂同一组权重（动量+）。如果两者差异很大，说明某一边实现有错。
+
+```{python}
+from quant import backtest as vb
+cols = ["年化收益", "年化波动", "夏普比率", "最大回撤"]
+fig = plot_lines(rec, fmt=".3f", height=400, yaxis_type="log")
+compare(("净值（零摩擦 vs 零成本）", [fig]), ("指标", [show_stats(recS, cols)]))
+```
+
+年化差 `{python} P(recS.iloc[1]["年化收益"] - recS.iloc[0]["年化收益"], 2)`。这个差异是预期之内的：
+零摩擦的 backtrader 仍然遵守停牌、涨跌停和整手规则，vectorbt 不管这些。
+停牌的股票买不进、卖不掉，持仓与目标权重就会偏离。下表是 1000 万资金下各策略受阻的次数：
+
+```{python}
+show(show_stats(ex["blocked"].astype(int)))
+```
+
+因子+ 持仓 30 只，停牌受阻最多。趋势+ 交易的是指数 ETF，不受这些规则影响。
+
+## 4. 现实执行：1000 万资金
+
+```{python}
+re = ex["real_equity"]
+pairs = [("动量+", "因子+"), ("均值回归+", "趋势+")]
+for a, b in pairs:
+    display(compare((a, [plot_lines(re[[c for c in re if c.startswith(a)]], fmt=".3f", height=340, yaxis_type="log")]),
+                    (b, [plot_lines(re[[c for c in re if c.startswith(b)]], fmt=".3f", height=340, yaxis_type="log")])))
+```
+
+```{python}
+bp = [c for c in rs.columns if c.endswith("(年化bp)") and not c.startswith("总")]
+fig = go.Figure()
+for c in bp:
+    k = c.replace("(年化bp)", "")
+    fig.add_bar(x=rs.index, y=rs[c], name=k, marker_color=viz.COST_COLORS.get(k), hovertemplate="%{y:.0f} bp")
+fig.update_layout(barmode="stack", height=380, yaxis_title="年化成本（bp）")
+both = pd.DataFrame({"年化收益·向量化": vs["年化收益"], "年化收益·事件驱动": rs["年化收益"],
+                     "夏普·向量化": vs["夏普比率"], "夏普·事件驱动": rs["夏普比率"]})
+compare(("成本拆分", [fig]), ("向量化（固定 0.2%）vs 事件驱动", [show_stats(both), show_stats(rs[["总成本(年化bp)", "年化双边换手"]])]))
+```
+
+- 1000 万资金下，事件驱动与向量化的结论基本一致：固定 0.2% 的假设在小资金下**大致合理**。
+- 成本结构：股票策略里**印花税、半价差、冲击三项量级相近**，佣金反而最小。换手越高的策略（动量+、均值回归+，年化双边换手约 8~9 倍）成本越高。
+- 趋势+ 的半价差（约 `{python} F(rs.loc["趋势+", "价差(年化bp)"], 0)` bp）**被高估了**：模型对 ETF 也用了股票的最小报价单位 0.01 元，
+  而 ETF 的最小报价单位是 0.001 元，真实半价差约小一个数量级。这是一个已知的模型缺陷，留待修正。
+- 均值回归+ 的事件驱动结果反而略好：它实际年化成本约 `{python} F(rs.loc["均值回归+", "总成本(年化bp)"], 0)` bp，低于固定 0.2% 单边 × 换手的估算。
+
+## 5. 资金容量
+
+```{python}
+y = cap["年化收益"].unstack(0)
+c = cap["冲击(年化bp)"].unstack(0)
+f1 = plot_lines(y, fmt=".2%", height=380, xaxis_type="log", yaxis_tickformat=".0%", xaxis_title="资金（元）")
+f2 = plot_lines(c, fmt=".0f", height=380, xaxis_type="log", xaxis_title="资金（元）", yaxis_title="bp/年")
+for f in (f1, f2):
+    f.update_traces(mode="lines+markers")
+compare(("年化收益 vs 资金", [f1]), ("冲击成本 vs 资金", [f2]))
+```
+
+```{python}
+fp = cap.loc["因子+"]["年化收益"]
+mp = cap.loc["动量+"]["年化收益"]
+```
+
+- **因子+** 从 100 万到 50 亿，年化只从 `{python} P(fp.iloc[0])` 降到 `{python} P(fp.iloc[-1])`。
+- **动量+** 到 10 亿只剩 `{python} P(mp.loc[1e9])`；均值回归+ 到 10 亿已经为负。
+- 差别来自三点：换手（因子+ 年化双边约 4 倍，动量+ 约 9 倍）、持仓数（30 只 vs 10 只，单票订单更小）、
+  持仓特征（因子+ 偏向低波动大盘股，$\sigma$ 小、ADV 大，平方根公式里两项都更有利）。
+
+**模型假象**：动量+ 在 50 亿时（`{python} P(mp.iloc[-1])`）反而比 10 亿（`{python} P(mp.loc[1e9])`）略好。
+原因是参与率上限：买不完的部分过期作废，等于被迫少交易，成本被封顶。
+回测把这算成"省了钱"，现实中这表现为**持仓偏离目标**（跟踪误差），策略已经不是原来那个策略了。
+
+## 6. 敏感性：模型参数不确定时怎么办
+
+$\eta$ 和参与率上限都没有"真值"，不同市场、不同时期、不同执行算法差别很大。做法是给出结果对它们的敏感性：
+
+```{python}
+show(plot_grid(sens, "年化收益", f"动量+，{ex['sensitivity_cash'] / 1e8:.0f} 亿资金：参与率上限 × 冲击系数 η", fmt=".2%"))
+```
+
+- 沿 $\eta$ 方向（列）结果变化剧烈：冲击系数从 0.35 到 1.4，年化相差 3.5~5.3 个百分点。
+- **参与率上限越高，结果越差**：允许单日吃掉更多成交额，冲击就越大。降低参与率、拉长执行时间，是大资金控制冲击的基本手段，
+  代价是执行期间价格可能已经跑掉（这一项本模型没有计入）。
+- 结论：10 亿规模的动量+ 在合理的参数范围内收益为 −3% ~ +5%，**不可靠**。
+
+## 7. 这个模型还没覆盖什么
+
+- **日内执行**：用开盘价成交，没有用分钟数据模拟 VWAP/TWAP 拆单。
+- **机会成本**：未成交部分的价格漂移没有计入成本，只体现在持仓偏离上。
+- **ST 股**：数据里没有历史 ST 标记，ST 股的 5% 涨跌幅限制按 10% 处理。cap300 是大市值股票池，影响很小。
+- **冲击的持久性**：平方根冲击被当成一次性成本，没有建模冲击在之后几天的衰减或延续。

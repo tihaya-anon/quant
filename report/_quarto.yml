@@ -11,9 +11,13 @@ website:
       - section: "专题"
         contents:
           - survivorship.qmd
+          - execution.qmd
       - section: "策略"
         contents:
           - momentum.qmd
+          - mean_reversion.qmd
+          - trend.qmd
+          - factor.qmd
   page-footer: "学习项目，非投资建议。"
 
 format:

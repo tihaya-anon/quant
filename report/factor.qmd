@@ -1,0 +1,107 @@
+---
+title: "多因子"
+---
+
+```{python}
+%run _setup.py
+base, plus = load("cap300", "factor"), load("cap300", "factor_plus")
+sb, sp = base["stats"], plus["stats"]
+ics = base["ic_summary"]
+nP = sp.index[0]
+```
+
+## 1. 经济直觉
+
+**因子**是能解释股票收益横截面差异的特征。每个因子背后要有一个"为什么会有溢价"的故事，否则多半是数据挖掘：
+
+| 因子 | 定义 | 风险解释 | 行为解释 |
+|---|---|---|---|
+| 价值 EP | $1/\mathrm{PE_{TTM}}$ | 便宜的公司多为困境企业，承担更多基本面风险 | 投资者外推增长，对成长股过度乐观 |
+| 价值 BP | $1/\mathrm{PB}$ | 同上 | 同上 |
+| 低波动 | $-\sigma^{60}$ | — | 杠杆约束、彩票偏好：投资者追高波动股，压低其后续收益 |
+| 短期反转 | $-r^{21}$ | 流动性提供的补偿 | 短期过度反应 |
+| 小市值 | $-\ln(\text{流通市值})$ | 小公司流动性差、信息少 | A 股还有"壳价值" |
+| 动量 | $\mathrm{MOM}^{12-1}$ | 见 [动量](momentum.qmd) | 反应不足 |
+
+## 2. 因子检验：Rank IC
+
+**Rank IC**：每月末，因子值的排名与下月收益排名之间的相关系数：
+
+$$
+\mathrm{IC}_t = \operatorname{corr}\Big(\operatorname{rank}(f_{i,t}),\ \operatorname{rank}(r_{i,t\to t+1})\Big),\qquad
+\mathrm{ICIR} = \frac{\overline{\mathrm{IC}}}{\sigma(\mathrm{IC})},\qquad
+t = \mathrm{ICIR}\cdot\sqrt{T}
+$$
+
+经验上 $|\overline{\mathrm{IC}}| > 0.03$ 算有用，$|t|>2$ 算统计显著。
+
+```{python}
+ic = base["ic"]
+roll = ic.rolling(12).mean()
+fig = plot_lines(roll[["价值EP", "低波动", "小市值", "动量12-1", "复合因子"]], fmt=".3f", height=380)
+fig.add_hline(y=0, line_color=viz.BENCH)
+compare(("IC 汇总（cap300，2017~2026，月度）", [show_stats(ics)]), ("12 个月滚动 IC", [fig]))
+```
+
+- **低波动**最强（IC `{python} F(ics.loc["低波动", "IC均值"], 3)`，$t$ = `{python} F(ics.loc["低波动", "t值"])`），这是 A 股最稳健的异象之一。
+- **小市值为负**（`{python} F(ics.loc["小市值", "IC均值"], 3)`）：在市值前 300 的大盘股里，"越小越好"不成立，近年反而是大的更好。
+  小市值效应主要存在于真正的小盘股，股票池换了，因子的含义就变了。
+- **动量**接近 0（`{python} F(ics.loc["动量12-1", "IC均值"], 3)`），和 [动量页](momentum.qmd) 的结论一致。
+- 滚动 IC 说明因子溢价**随时间切换**：同一个因子可以连续一两年失效。
+
+### 因子相关性
+
+```{python}
+corr = base["factor_corr"]
+fig = go.Figure(go.Heatmap(z=corr.values, x=corr.columns, y=corr.index, colorscale=viz.DIVERGING, zmin=-1, zmax=1,
+                           text=corr.round(2).values, texttemplate="%{text}", xgap=2, ygap=2,
+                           hovertemplate="%{y} × %{x}: %{z:.2f}<extra></extra>"))
+fig.update_layout(height=380, hovermode="closest", yaxis_autorange="reversed")
+lay = base["layer_nav"].drop(columns="多空(Q5-Q1)")
+layer_txt = " / ".join(f"{v:.2f}" for v in lay.iloc[-1])
+fig2 = plot_lines(lay, fmt=".2f", height=380, yaxis_type="log")
+compare(("横截面 Spearman 相关（各期平均）", [fig]), ("五分组净值（按复合因子，未扣费）", [fig2]))
+```
+
+- EP、BP、低波动两两相关 0.55~0.70：它们部分在描述同一件事（便宜的大盘股往往波动也低）。等权合成时，这三个因子实际被**重复计权**。
+- 动量与价值、低波动负相关：组合里放进动量能带来分散。
+- 五分组：期末净值 Q1→Q5 依次为 `{python} layer_txt`，**单调递增**，且主要差距在 Q5。
+  单调性比"Q5 赚钱"更重要：它说明因子在整个横截面上都有区分度，而不是靠少数极端股票。
+
+## 3. 从因子到组合
+
+| | 基础版 | 增强版（因子+） |
+|---|---|---|
+| 候选因子 | EP、BP、低波动、反转、小市值 | 再加动量，共 6 个 |
+| 合成权重 | 等权 | **滚动 IC 加权**：$w_{k,t} \propto \max\big(0,\ \overline{\mathrm{IC}}_{k,\,t-24\ldots t-1}\big)$ |
+| 持仓 | Top10，等权，每月全换 | Top30 + 缓冲区（前 45 名不换）+ 逆波动率加权 |
+
+IC 加权只用**截至上月已经实现**的 IC（月末 $t$ 的 IC 要等到 $t+1$ 月末才知道，所以要滞后一期），否则就是未来函数。
+
+```{python}
+fw = plus["factor_weights"]
+fig = go.Figure()
+for c in fw.columns:
+    fig.add_scatter(x=fw.index, y=fw[c], name=c, stackgroup="w", hovertemplate="%{y:.0%}")
+fig.update_layout(yaxis_tickformat=".0%", height=380)
+cols = ["年化收益", "年化波动", "夏普比率", "最大回撤", "月均单边换手"]
+compare(("滚动 IC 权重（堆叠）", [fig]), ("消融", [show_stats(sp, cols)]))
+```
+
+- 小市值的权重 2018 年起基本为 0：IC 加权自动"关掉"了在这个股票池里失效的因子。
+- **反面教材**：动量的权重在 2020 年升到约 60%、2021 年约 90%，正是抱团行情的顶部；2022 年动量崩溃，权重才降下来。
+  滚动 IC 加权本质上是"对因子做动量"，它总是**追随**过去两年最好的因子，在因子轮动的拐点会慢一拍。
+- 但只看合成因子的 IC，IC 加权（`{python} F(plus["composite_ic"]["IC加权复合"], 4)`）并不比等权（`{python} F(plus["composite_ic"]["基础版复合"], 4)`）高。
+  **改进主要来自组合构建**，不是因子权重：持仓从 10 只扩到 30 只降低了个股噪声，缓冲区把换手从 `{python} P(sp.iloc[2]["月均单边换手"], 0)` 降到 `{python} P(sp.loc[nP, "月均单边换手"], 0)`。
+- 市值中性化几乎没有影响：市值前 300 的股票市值区间本来就窄，没有多少可中和的暴露。
+
+## 4. 基础版 vs 增强版
+
+```{python}
+keep = [c for c in sp.index if "中性化" not in c and "仅IC" not in c]
+compare(("基础版：等权复合 Top10", [plot_equity(base), show_stats(sb, cols)]),
+        ("增强版：因子+", [plot_equity(plus, cols=keep), show_stats(sp.loc[keep], cols)]))
+```
+
+增强版年化 `{python} P(sp.loc[nP, "年化收益"])`、夏普 `{python} F(sp.loc[nP, "夏普比率"])`，是四个策略里最好的。
+在 [执行仿真](execution.qmd) 里它也是最耐资金规模的：换手低、持仓分散、偏向低波动大盘股，冲击成本小。

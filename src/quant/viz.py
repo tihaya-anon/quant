@@ -79,10 +79,17 @@ def _dash(name: str):
 # ---------------------------------------------------------------- 表格
 
 def show_stats(stats: pd.DataFrame, cols: list[str] | None = None):
+    """指标表格式化：列名含百分比类指标 → 百分比；bp/次数/整数列 → 整数；其余两位小数。"""
     stats = stats if cols is None else stats[[c for c in cols if c in stats.columns]]
-    fmt = {c: "{:.1%}" for c in stats.columns if c in PCT_COLS}
-    fmt.update({c: "{:.2f}" for c in stats.columns if c not in PCT_COLS})
-    fmt.update({c: "{:.0f}" for c in stats.columns if "bp" in c or "次数" in c or "订单" in c})
+    fmt = {}
+    for c in stats.columns:
+        name = str(c)
+        if any(k in name for k in ("bp", "次数", "订单")) or pd.api.types.is_integer_dtype(stats[c]):
+            fmt[c] = "{:,.0f}"
+        elif any(k in name for k in PCT_COLS):
+            fmt[c] = "{:.1%}"
+        else:
+            fmt[c] = "{:.2f}"
     return stats.style.format(fmt, na_rep="–")  # type: ignore
 
 
@@ -142,6 +149,8 @@ def plot_lines(df: pd.DataFrame, title: str = "", fmt: str = ".2f", height: int 
         name = " ".join(map(str, c)) if isinstance(c, tuple) else str(c)
         fig.add_scatter(x=df.index, y=df[c], name=name, line=dict(color=color_of(name), dash=_dash(name)),
                         hovertemplate=f"%{{y:{fmt}}}")
+    if "xaxis_title" in layout:  # 横轴标题会和下方图例重叠，图例再往下放
+        layout = {"legend_y": -0.22, "margin_b": 40, **layout}
     fig.update_layout(title=title, height=height, **layout)
     return fig
 
