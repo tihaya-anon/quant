@@ -39,8 +39,9 @@ case "$cmd" in
   fetch)
     dl=$(mktemp -d)
     trap 'rm -rf "$dl"' EXIT
+    # 新版 gh 在未指定 tag 时强制要求 --pattern（或 --archive），用 '*' 匹配全部资产。
     if [[ -n "$tag" ]]; then gh release download "$tag" -R "$DATA_REPO" -D "$dl"
-    else gh release download -R "$DATA_REPO" -D "$dl"; fi
+    else gh release download -R "$DATA_REPO" -D "$dl" -p '*'; fi
     (cd "$dl" && sha256sum -c SHA256SUMS --quiet)
     mkdir -p data/local/daily
     for f in "$dl"/local-*.parquet; do
